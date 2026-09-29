@@ -125,6 +125,8 @@ def processar_resultado():
             print("Relatório aberto no preview.")
 
             clicar_botao_preview()
+
+            imprimir_como_pdf()
             
             return "preview"
 
@@ -242,6 +244,197 @@ def clicar_botao_preview():
 
     print("Botão clicado.")
 
+
+def imprimir_como_pdf():
+    desktop = Desktop(backend="win32")
+
+    print("Aguardando janela de impressão...")
+
+    janela = None
+
+    while janela is None:
+        janelas = desktop.windows(
+            class_name="TfrPrintForm"
+        )
+
+        for item in janelas:
+            try:
+                if item.is_visible():
+                    janela = item
+                    break
+            except Exception:
+                pass
+
+        if janela is None:
+            time.sleep(0.2)
+
+    print("Janela de impressão encontrada.")
+    print("Handle:", janela.handle)
+
+    listar_combos_impressao(janela)
+
+    # ---------------------------------------------------------
+    # Localiza a ComboBox da impressora
+    # ---------------------------------------------------------
+
+    combo_impressora = None
+
+    for controle in janela.descendants():
+        try:
+            if controle.class_name() != "TComboBox":
+                continue
+
+            itens = controle.texts()
+
+            print(
+                "Analisando TComboBox:",
+                repr(controle.window_text()),
+                "| Handle:",
+                controle.handle
+            )
+
+            if "Microsoft Print to PDF" in itens:
+                combo_impressora = controle
+                break
+
+        except Exception:
+            pass
+
+    if combo_impressora is None:
+        print("ComboBox da impressora não encontrada.")
+        return False
+
+    # ---------------------------------------------------------
+    # Seleciona Microsoft Print to PDF
+    # ---------------------------------------------------------
+
+    print(
+        "ComboBox da impressora encontrada:",
+        combo_impressora.handle
+    )
+
+    print(
+        "Impressora atual:",
+        repr(combo_impressora.window_text())
+    )
+
+    print("Selecionando Microsoft Print to PDF...")
+
+    try:
+        combo_impressora.select("Microsoft Print to PDF")
+    except Exception as e:
+        print("Erro ao selecionar impressora:", e)
+        return False
+
+    time.sleep(0.5)
+
+    print(
+        "Impressora depois da seleção:",
+        repr(combo_impressora.window_text())
+    )
+
+    # ---------------------------------------------------------
+    # Localiza o botão OK
+    # ---------------------------------------------------------
+
+    botao_ok = None
+
+    for controle in janela.descendants():
+        try:
+            if (
+                controle.class_name() == "TButton"
+                and controle.window_text() == "OK"
+            ):
+                botao_ok = controle
+                break
+
+        except Exception:
+            pass
+
+    if botao_ok is None:
+        print("Botão OK da impressão não encontrado.")
+        return False
+
+    print("Botão OK da impressão encontrado.")
+    print("Handle:", botao_ok.handle)
+    print("Clicando em OK...")
+
+    botao_ok.click()
+
+    print("OK da impressão clicado.")
+
+    return True
+
+
+def listar_combos_impressao(janela):
+    print("\nCOMBOBOXES ENCONTRADAS")
+    print("=" * 70)
+
+    combos = janela.descendants(class_name="TComboBox")
+
+    print(f"Quantidade: {len(combos)}\n")
+
+    for i, combo in enumerate(combos):
+        try:
+            print("-" * 70)
+            print(f"COMBO [{i}]")
+            print("Handle :", combo.handle)
+            print("Texto  :", repr(combo.window_text()))
+            print("Classe :", combo.class_name())
+
+            try:
+                itens = combo.texts()
+
+                print("Quantidade de itens:", len(itens))
+
+                for j, item in enumerate(itens):
+                    print(f"  [{j}] {item!r}")
+
+            except Exception as e:
+                print("Não foi possível obter os itens:", e)
+
+        except Exception as e:
+            print(f"Erro na ComboBox [{i}]: {e}")
+
+def selecionar_impressora(janela, nome_impressora):
+    combos = janela.descendants(
+        class_name="TComboBox"
+    )
+
+    for combo in combos:
+        try:
+            itens = combo.texts()
+
+            if nome_impressora in itens:
+                print("ComboBox da impressora encontrada.")
+                print("Handle:", combo.handle)
+                print("Impressora atual:", repr(combo.window_text()))
+
+                print("Selecionando:", nome_impressora)
+
+                combo.select(nome_impressora)
+
+                time.sleep(0.5)
+
+                print(
+                    "Impressora depois da seleção:",
+                    repr(combo.window_text())
+                )
+
+                return True
+
+        except Exception as e:
+            print(
+                f"Erro ao analisar ComboBox "
+                f"{combo.handle}: {e}"
+            )
+
+    print(
+        f"Impressora {nome_impressora!r} "
+        "não encontrada."
+    )
+
+    return False
 
 def main():
     parser = argparse.ArgumentParser()
