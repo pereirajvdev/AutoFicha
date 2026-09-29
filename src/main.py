@@ -130,11 +130,14 @@ def processar_resultado(nome_funcionario, ano):
 
             clicar_botao_preview()
 
-            imprimir_como_pdf(
+            salvo = imprimir_como_pdf(
                 nome_funcionario,
                 ano
             )
-            
+
+            if salvo:
+                fechar_preview()
+
             return "preview"
 
         time.sleep(0.2)
@@ -581,6 +584,31 @@ def obter_nome_funcionario(janela):
     return None
 
 
+def fechar_preview():
+    desktop = Desktop(backend="win32")
+
+    for janela in desktop.windows():
+        try:
+            if (
+                janela.window_text() == "Ficha_Financeira_Resumo_Geral"
+                and janela.class_name() == "TfrmPreview"
+            ):
+                print("Fechando Ficha_Financeira_Resumo_Geral...")
+
+                janela.close()
+
+                time.sleep(0.5)
+
+                print("Preview fechado.")
+                return True
+
+        except Exception:
+            pass
+
+    print("Preview não encontrado para fechar.")
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -601,7 +629,13 @@ def main():
 
     print(f"Intervalo recebido: {ano_inicial}-{ano_final}")
 
-    alterar_ano(ano_inicial)
+    for ano in range(ano_inicial, ano_final + 1):
+        print()
+        print("=" * 70)
+        print(f"PROCESSANDO ANO: {ano}")
+        print("=" * 70)
+
+        alterar_ano(ano)
 
 
 if __name__ == "__main__":
