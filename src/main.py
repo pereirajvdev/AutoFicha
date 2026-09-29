@@ -3,6 +3,7 @@ import time
 
 from pywinauto import Desktop
 from pywinauto import mouse
+from pathlib import Path
 
 
 TITULO_JANELA = (
@@ -12,6 +13,9 @@ TITULO_JANELA = (
 
 TITULO_ERRO = "Erro Não Previsto"
 
+DIRETORIO_SERVIDORES = Path(
+    r"C:\Users\Joao Castro\Desktop\JOAO\Servidores"
+)
 
 def clicar_controle(janela, texto):
     controles = janela.descendants()
@@ -84,7 +88,7 @@ def tratar_erro():
     return True
 
 
-def processar_resultado():
+def processar_resultado(nome_funcionario, ano):
     print("Aguardando resultado...")
 
     janela_carregamento = None
@@ -126,7 +130,10 @@ def processar_resultado():
 
             clicar_botao_preview()
 
-            imprimir_como_pdf()
+            imprimir_como_pdf(
+                nome_funcionario,
+                ano
+            )
             
             return "preview"
 
@@ -166,6 +173,14 @@ def alterar_ano(ano):
         return
 
     print("Janela encontrada.")
+
+    nome_funcionario = obter_nome_funcionario(janela)
+
+    if nome_funcionario is None:
+        print("Nome do funcionário não encontrado.")
+        return
+
+    print("Funcionário:", nome_funcionario)
     
     controles = janela.descendants()
 
@@ -225,7 +240,10 @@ def alterar_ano(ano):
     print("OK clicado.")
 
     # Trata o resultado do processamento.
-    resultado = processar_resultado()
+    resultado = processar_resultado(
+        nome_funcionario,
+        ano
+    )
 
     if resultado == "erro":
         print("Fluxo de erro concluído.")
@@ -245,7 +263,7 @@ def clicar_botao_preview():
     print("Botão clicado.")
 
 
-def imprimir_como_pdf():
+def imprimir_como_pdf(nome_funcionario, ano):
     desktop = Desktop(backend="win32")
 
     print("Aguardando janela de impressão...")
@@ -363,6 +381,108 @@ def imprimir_como_pdf():
 
     print("OK da impressão clicado.")
 
+    # Aguarda a janela "Salvar saída de impressão como"
+    return salvar_pdf(nome_funcionario, ano)
+
+
+def salvar_pdf(nome_funcionario, ano):
+    desktop = Desktop(backend="win32")
+
+    print("Aguardando janela para salvar PDF...")
+
+    janela = None
+
+    while janela is None:
+        for item in desktop.windows():
+            try:
+                if (
+                    item.is_visible()
+                    and item.class_name() == "#32770"
+                ):
+                    janela = item
+                    break
+            except Exception:
+                pass
+
+        if janela is None:
+            time.sleep(0.2)
+
+    print("Janela de salvamento encontrada.")
+    print("Título:", janela.window_text())
+
+    pasta_servidor = (
+        DIRETORIO_SERVIDORES / nome_funcionario
+    )
+
+    pasta_servidor.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    print("Pasta do servidor:", pasta_servidor)
+
+    nome_arquivo = (
+        f"FICHA FINANCEIRA {ano}.pdf"
+    )
+
+    caminho_arquivo = pasta_servidor / nome_arquivo
+
+    print("Arquivo:", nome_arquivo)
+    print("Caminho:", caminho_arquivo)
+
+    # Campo de nome do arquivo
+    campo_nome = None
+
+    for controle in janela.descendants():
+        try:
+            if controle.class_name() != "Edit":
+                continue
+
+            rect = controle.rectangle()
+
+            # Campo grande de nome do arquivo
+            if rect.width() > 500:
+                campo_nome = controle
+                break
+
+        except Exception:
+            pass
+
+    if campo_nome is None:
+        print("Campo do nome do arquivo não encontrado.")
+        return False
+
+    # Define o caminho completo
+    campo_nome.set_focus()
+    campo_nome.type_keys(
+        str(caminho_arquivo),
+        with_spaces=True
+    )
+
+    print("Nome do arquivo preenchido.")
+
+    # Botão Salvar
+    botao_salvar = None
+
+    for controle in janela.descendants():
+        try:
+            if (
+                controle.class_name() == "Button"
+                and controle.window_text() == "Sa&lvar"
+            ):
+                botao_salvar = controle
+                break
+        except Exception:
+            pass
+
+    if botao_salvar is None:
+        print("Botão Salvar não encontrado.")
+        return False
+
+    print("Clicando em Salvar...")
+    botao_salvar.click()
+
+    print("PDF salvo.")
     return True
 
 
@@ -435,6 +555,31 @@ def selecionar_impressora(janela, nome_impressora):
     )
 
     return False
+
+
+def obter_nome_funcionario(janela):
+    listboxes = janela.descendants(
+        class_name="TListBox"
+    )
+
+    for listbox in listboxes:
+        try:
+            for item in listbox.texts():
+                item = item.strip()
+
+                if " - " not in item:
+                    continue
+
+                codigo, nome = item.split(" - ", 1)
+
+                if codigo.strip().isdigit() and nome.strip():
+                    return nome.strip()
+
+        except Exception:
+            pass
+
+    return None
+
 
 def main():
     parser = argparse.ArgumentParser()
