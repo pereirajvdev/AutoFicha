@@ -186,7 +186,6 @@ def alterar_ano(ano):
     print("Funcionário:", nome_funcionario)
     
     controles = janela.descendants()
-
     campo_ano = None
 
     for controle in controles:
@@ -194,9 +193,9 @@ def alterar_ano(ano):
             if controle.class_name() != "TcxCustomInnerTextEdit":
                 continue
 
-            rect = controle.rectangle()
+            texto = controle.window_text().strip()
 
-            if rect.left < 500 and rect.top < 450:
+            if texto.isdigit() and 1900 <= int(texto) <= 2100:
                 campo_ano = controle
                 break
 
@@ -609,8 +608,156 @@ def fechar_preview():
     return False
 
 
+def preencher_matricula(matricula):
+    desktop = Desktop(backend="win32")
+
+    janela = desktop.window(
+        title=TITULO_JANELA,
+        class_name="Tfm_fl_impressao_rel"
+    )
+
+    if not janela.exists(timeout=5):
+        print("Janela do Gerador de Relatórios não encontrada.")
+        return False
+
+    print("Janela encontrada para preenchimento da matrícula.")
+
+    # ---------------------------------------------------------
+    # Localiza a aba "Funcionário"
+    # ---------------------------------------------------------
+
+    aba_funcionario = None
+
+    for controle in janela.descendants():
+        try:
+            if (
+                controle.class_name() == "TcxTabSheet"
+                and controle.window_text().strip() == "Funcionário"
+            ):
+                aba_funcionario = controle
+                break
+        except Exception:
+            pass
+
+    if aba_funcionario is None:
+        print("Aba 'Funcionário' não encontrada.")
+        return False
+
+    print(
+        "Aba 'Funcionário' encontrada:",
+        aba_funcionario.handle
+    )
+
+    # ---------------------------------------------------------
+    # Localiza os TelLookupCombo dentro da aba
+    # ---------------------------------------------------------
+
+    combos = aba_funcionario.descendants(
+        class_name="TelLookupCombo"
+    )
+
+    print(
+        f"TelLookupCombo encontrados na aba: {len(combos)}"
+    )
+
+    for combo in combos:
+        try:
+            rect = combo.rectangle()
+
+            print(
+                f"TelLookupCombo | "
+                f"texto={combo.window_text()!r} | "
+                f"posição=({rect.left},{rect.top}) | "
+                f"tamanho=({rect.width()}x{rect.height()})"
+            )
+
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------
+    # O campo Funcionário é o TelLookupCombo que está
+    # aproximadamente em X=465 / Y=554.
+    #
+    # Os outros TelLookupCombo ficam nos campos de
+    # estabelecimento/lotação acima.
+    #
+    # Não usamos handle.
+    # ---------------------------------------------------------
+
+    campo_matricula = None
+
+    for combo in combos:
+        try:
+            rect = combo.rectangle()
+
+            # O campo de funcionário está dentro da região
+            # inferior da aba, próximo ao topo da lista.
+            if (
+                450 <= rect.left <= 500
+                and
+                540 <= rect.top <= 570
+            ):
+                campo_matricula = combo
+                break
+
+        except Exception:
+            pass
+
+    if campo_matricula is None:
+        print("Campo de matrícula do funcionário não encontrado.")
+        return False
+
+    print()
+    print("Campo de matrícula encontrado.")
+    print("Classe:", campo_matricula.class_name())
+    print("Posição:", campo_matricula.rectangle())
+
+    # ---------------------------------------------------------
+    # Preenche matrícula
+    # ---------------------------------------------------------
+
+    campo_matricula.set_focus()
+
+    time.sleep(0.1)
+
+    campo_matricula.type_keys(
+        "^a"
+    )
+
+    campo_matricula.type_keys(
+        str(matricula)
+    )
+
+    print(
+        "Matrícula preenchida:",
+        matricula
+    )
+
+    # ---------------------------------------------------------
+    # CONFIRMA COM ENTER
+    # ---------------------------------------------------------
+
+    campo_matricula.type_keys(
+        "{ENTER}"
+    )
+
+    print("ENTER enviado para a matrícula.")
+
+    time.sleep(0.5)
+
+    return True
+
+
 def main():
+
     parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--mat",
+        required=True,
+        type=int,
+        help="Matrícula do servidor"
+    )
 
     parser.add_argument(
         "intervalo",
@@ -619,19 +766,43 @@ def main():
 
     args = parser.parse_args()
 
-    ano_inicial, ano_final = args.intervalo.split("-")
+    matricula = args.mat
 
-    ano_inicial = int(ano_inicial)
-    ano_final = int(ano_final)
+    try:
+        ano_inicial, ano_final = args.intervalo.split("-")
+        ano_inicial = int(ano_inicial)
+        ano_final = int(ano_final)
+    except ValueError:
+        raise ValueError(
+            "Intervalo inválido. Use o formato ANO_INICIAL-ANO_FINAL. "
+            "Exemplo: 2025-2026"
+        )
 
     if ano_inicial > ano_final:
-        raise ValueError("O ano inicial não pode ser maior que o ano final.")
+        raise ValueError(
+            "O ano inicial não pode ser maior que o ano final."
+        )
 
+    print(f"Matrícula recebida: {matricula}")
     print(f"Intervalo recebido: {ano_inicial}-{ano_final}")
 
+    # ========================================================
+    # PREENCHE A MATRÍCULA
+    # ========================================================
+
+    if not preencher_matricula(matricula):
+        print("Não foi possível preencher a matrícula.")
+        return
+
+    # ========================================================
+    # PROCESSA OS ANOS
+    # ========================================================
+
     for ano in range(ano_inicial, ano_final + 1):
+
         print()
         print("=" * 70)
+        print(f"MATRÍCULA: {matricula}")
         print(f"PROCESSANDO ANO: {ano}")
         print("=" * 70)
 
