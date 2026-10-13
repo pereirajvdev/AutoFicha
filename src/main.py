@@ -5,6 +5,8 @@ from pywinauto import Desktop
 from pywinauto import mouse
 from pathlib import Path
 
+from datetime import datetime, date
+from openpyxl import load_workbook
 
 TITULO_JANELA = (
     "Gerador de Relatórios "
@@ -484,7 +486,11 @@ def salvar_pdf(nome_funcionario, ano):
     print("Clicando em Salvar...")
     botao_salvar.click()
 
-    print("PDF salvo.")
+    print("Comando de salvar enviado.")
+
+    confirmar_sobrescrita_pdf()
+
+    print("Processo de salvamento concluído.")
     return True
 
 
@@ -684,28 +690,22 @@ def preencher_matricula(matricula):
     # Não usamos handle.
     # ---------------------------------------------------------
 
-    campo_matricula = None
-
-    for combo in combos:
-        try:
-            rect = combo.rectangle()
-
-            # O campo de funcionário está dentro da região
-            # inferior da aba, próximo ao topo da lista.
-            if (
-                450 <= rect.left <= 500
-                and
-                540 <= rect.top <= 570
-            ):
-                campo_matricula = combo
-                break
-
-        except Exception:
-            pass
-
-    if campo_matricula is None:
-        print("Campo de matrícula do funcionário não encontrado.")
+    if not combos:
+        print("Nenhum TelLookupCombo encontrado na aba 'Funcionário'.")
         return False
+
+    if len(combos) > 1:
+        print(
+            "ATENÇÃO: foram encontrados vários TelLookupCombo "
+            "na aba 'Funcionário'."
+        )
+
+    campo_matricula = combos[0]
+
+    print()
+    print("Campo de matrícula encontrado.")
+    print("Classe:", campo_matricula.class_name())
+    print("Posição:", campo_matricula.rectangle())
 
     print()
     print("Campo de matrícula encontrado.")
@@ -748,61 +748,292 @@ def preencher_matricula(matricula):
     return True
 
 
-def main():
+def confirmar_sobrescrita_pdf():
 
+    print()
+    print("Verificando confirmação de sobrescrita...")
+
+    desktop = Desktop(backend="win32")
+
+    limite = time.time() + 5
+
+    while time.time() < limite:
+
+        try:
+
+            janela = desktop.window(
+                class_name="#32770",
+                title="Confirmar Salvar como"
+            )
+
+            if janela.exists():
+
+                print(
+                    'Janela "Confirmar Salvar como" encontrada.'
+                )
+
+                # Procura o botão &Sim
+                botoes = janela.descendants(
+                    class_name="Button"
+                )
+
+                for botao in botoes:
+
+                    try:
+
+                        texto = botao.window_text().strip()
+
+                        if texto == "&Sim":
+
+                            print(
+                                'Botão "&Sim" encontrado.'
+                            )
+
+                            botao.click()
+
+                            print(
+                                'Botão "&Sim" clicado.'
+                            )
+
+                            return True
+
+                    except Exception:
+                        pass
+
+                print(
+                    'Janela encontrada, mas botão "&Sim" '
+                    'não foi localizado.'
+                )
+
+        except Exception:
+            pass
+
+        time.sleep(0.1)
+
+    print(
+        'Janela "Confirmar Salvar como" não apareceu.'
+    )
+
+    return False
+
+
+
+def ler_vinculos(caminho_excel):
+    caminho_excel = Path(caminho_excel)
+
+    if not caminho_excel.exists():
+        raise FileNotFoundError(
+            f"Arquivo de vínculos não encontrado: {caminho_excel}"
+        )
+
+    wb = load_workbook(
+        caminho_excel,
+        read_only=True,
+        data_only=True
+    )
+
+    try:
+        ws = wb.active
+        vinculos = []
+
+        for numero_linha, linha in enumerate(
+            ws.iter_rows(min_col=1, max_col=3, values_only=True),
+            start=1
+        ):
+            matricula, inicio, fim = linha
+
+            # Ignora linhas vazias
+            if matricula is None and inicio is None and fim is None:
+                continue
+
+            # Converte a matrícula
+            try:
+                matricula_num = int(matricula)
+            except (TypeError, ValueError, OverflowError):
+                # Ignora cabeçalhos ou linhas inválidas
+                continue
+
+            def converter_data(valor):
+                if isinstance(valor, datetime):
+                    return valor.date()
+
+                if isinstance(valor, date):
+                    return valor
+
+                if isinstance(valor, str):
+                    return datetime.strptime(
+                        valor.strip(), "%d/%m/%Y"
+                    ).date()
+
+                raise ValueError(
+                    f"Data inválida na linha {numero_linha}: {valor!r}"
+                )
+
+            data_inicio = converter_data(inicio)
+            data_fim = converter_data(fim)
+
+            if data_inicio > data_fim:
+                raise ValueError(
+                    f"Data inicial posterior à final na linha "
+                    f"{numero_linha}."
+                )
+
+            vinculos.append({
+                "matricula": matricula_num,
+                "inicio": data_inicio,
+                "fim": data_fim,
+            })
+
+        if not vinculos:
+            raise ValueError(
+                "Nenhum vínculo válido encontrado nas colunas A, B e C."
+            )
+
+        return vinculos
+
+    finally:
+        wb.close()
+
+
+
+def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--mat",
-        required=True,
-        type=int,
-        help="Matrícula do servidor"
+        "entrada",
+        nargs="?",
+        help="Caminho do vinculos.xlsx ou intervalo de anos"
     )
 
     parser.add_argument(
-        "intervalo",
-        help="Intervalo de anos no formato ANO_INICIAL-ANO_FINAL"
+        "--mat",
+        type=int,
+        help="Matrícula para processamento manual"
+    )
+
+    parser.add_argument(
+        "--padrao",
+        action="store_true",
+        help="Executa matrícula 3198 no ano 2026"
     )
 
     args = parser.parse_args()
 
-    matricula = args.mat
-
-    try:
-        ano_inicial, ano_final = args.intervalo.split("-")
-        ano_inicial = int(ano_inicial)
-        ano_final = int(ano_final)
-    except ValueError:
-        raise ValueError(
-            "Intervalo inválido. Use o formato ANO_INICIAL-ANO_FINAL. "
-            "Exemplo: 2025-2026"
-        )
-
-    if ano_inicial > ano_final:
-        raise ValueError(
-            "O ano inicial não pode ser maior que o ano final."
-        )
-
-    print(f"Matrícula recebida: {matricula}")
-    print(f"Intervalo recebido: {ano_inicial}-{ano_final}")
-
     # ========================================================
-    # PREENCHE A MATRÍCULA
+    # MODO PADRÃO
     # ========================================================
 
-    if not preencher_matricula(matricula):
-        print("Não foi possível preencher a matrícula.")
+    if args.padrao:
+        matricula = 3198
+        ano_inicial = 2026
+        ano_final = 2026
+
+        print("MODO PADRÃO")
+        print(f"Matrícula: {matricula}")
+        print(f"Ano: {ano_inicial}")
+
+        if not preencher_matricula(matricula):
+            print("Não foi possível preencher a matrícula.")
+            return
+
+        alterar_ano(ano_inicial)
         return
 
+    
     # ========================================================
-    # PROCESSA OS ANOS
+    # MODO AUTOMÁTICO: ARQUIVO VINCULOS.XLSX
     # ========================================================
 
-    for ano in range(ano_inicial, ano_final + 1):
+    if args.entrada and args.entrada.lower().endswith(".xlsx"):
+        vinculos = ler_vinculos(args.entrada)
+
+        print("=" * 70)
+        print("ETAPA 1: PREENCHER TODAS AS MATRÍCULAS")
+        print("=" * 70)
+
+        # Primeiro, preencher todas as matrículas
+        for indice, vinculo in enumerate(vinculos, start=1):
+            matricula = vinculo["matricula"]
+
+            print(
+                f"[{indice}/{len(vinculos)}] "
+                f"Preenchendo matrícula: {matricula}"
+            )
+
+            if not preencher_matricula(matricula):
+                print(
+                    f"ERRO ao preencher a matrícula {matricula}. "
+                    "Processamento interrompido."
+                )
+                return
 
         print()
         print("=" * 70)
-        print(f"MATRÍCULA: {matricula}")
+        print("ETAPA 2: PROCESSAR OS ANOS DE CADA VÍNCULO")
+        print("=" * 70)
+
+        # Depois, percorrer todos os vínculos e seus anos
+        for indice, vinculo in enumerate(vinculos, start=1):
+            matricula = vinculo["matricula"]
+            ano_inicial = vinculo["inicio"].year
+            ano_final = vinculo["fim"].year
+
+            print()
+            print("#" * 70)
+            print(f"VÍNCULO {indice}/{len(vinculos)}")
+            print(f"Matrícula: {matricula}")
+            print(f"Anos: {ano_inicial}-{ano_final}")
+            print("#" * 70)
+
+            for ano in range(ano_inicial, ano_final + 1):
+                print(f"Processando matrícula {matricula}, ano {ano}...")
+                alterar_ano(ano)
+
+        print()
+        print("=" * 70)
+        print("PROCESSAMENTO FINALIZADO.")
+        print("=" * 70)
+        return
+
+
+    # ========================================================
+    # MODO MANUAL: MATRÍCULA + INTERVALO DE ANOS
+    # Exemplo: python src/main.py --mat 22057 2017-2018
+    # ========================================================
+
+    if args.mat is None:
+        parser.error(
+            "Informe o caminho de um vinculos.xlsx, "
+            "--mat com o intervalo, ou --padrao."
+        )
+
+    if not args.entrada:
+        parser.error(
+            "Informe o intervalo de anos. Exemplo: 2017-2024"
+        )
+
+    try:
+        ano_inicial, ano_final = map(
+            int, args.entrada.split("-")
+        )
+    except ValueError:
+        parser.error(
+            "Intervalo inválido. Use o formato ANO_INICIAL-ANO_FINAL."
+        )
+
+    if ano_inicial > ano_final:
+        parser.error(
+            "O ano inicial não pode ser maior que o ano final."
+        )
+
+    if not preencher_matricula(args.mat):
+        print("Não foi possível preencher a matrícula.")
+        return
+
+    for ano in range(ano_inicial, ano_final + 1):
+        print()
+        print("=" * 70)
+        print(f"MATRÍCULA: {args.mat}")
         print(f"PROCESSANDO ANO: {ano}")
         print("=" * 70)
 
