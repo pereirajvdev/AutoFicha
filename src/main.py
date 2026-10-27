@@ -3,6 +3,7 @@ import time
 
 from pywinauto import Desktop
 from pywinauto import mouse
+import pyautogui
 from pathlib import Path
 
 from datetime import datetime, date
@@ -15,6 +16,8 @@ TITULO_GERADOR = (
 
 TITULO_ERRO = "Erro Não Previsto"
 
+TITULO_NAO_ENCONTRADO = "Arquivo Não Encontrado"
+
 TITULO_SAIDA_IMPRESSAO = "Salvar saída de impressão como"
 
 TITULO_FICHA = "Ficha_Financeira_Resumo_Geral"
@@ -26,7 +29,7 @@ DIRETORIO_SERVIDORES = Path(
 )
 
 TEMPO_LIMITE = 60
-INTERVALO_VERIFICACAO = 1
+INTERVALO_VERIFICACAO = 0.3
 
 def clicar_controle(janela, texto):
     controles = janela.descendants()
@@ -53,6 +56,7 @@ def encontrar_janela_carregamento():
             )
 
             if botao_cancelar.exists():
+                input("Encontrado espera")
                 return janela
 
         except Exception:
@@ -81,12 +85,9 @@ def encontrar_preview():
 
 
 def tratar_erro():
-    desktop = Desktop(backend="win32")
 
-    janela_erro = desktop.window(title=TITULO_ERRO)
-
-    if not janela_erro.exists(timeout=0.2):
-        return False
+    janela_erro = localizar_janela(TITULO_ERRO)
+    janela_erro.set_focus()
 
     print("Janela 'Erro Não Previsto' detectada.")
 
@@ -99,59 +100,48 @@ def tratar_erro():
     return True
 
 
-def processar_resultado(nome_funcionario, ano):
+def processar_resultado(nome_funcionario, ano, controles):
     print("Aguardando resultado...")
 
-    janela_carregamento = None
-    tela_anterior = None
+    tela_atual = get_screen_name()
 
-    while True:
+    if tela_atual != tela_anterior:
+        print(tela_atual)
+        tela_anterior = tela_atual
 
-        tela_atual = get_screen_name()
+    # pode aparecer 2 janelas, erro ou preview
+    janela = aguardar_janela(TITULO_ERRO, TITULO_FICHA, time_limit=8)
+    janela.set_focus()
+    if janela is None: 
+        # clicar enter dps executar ficha
+        pyautogui.press("enter")
+        executar_ficha(nome_funcionario, ano, controles)
+        
 
-        if tela_atual != tela_anterior:
-            print(tela_atual)
-            tela_anterior = tela_atual
+    titulo = janela.window_text()
 
-        # Guarda a janela de carregamento assim que ela aparecer
-        if janela_carregamento is None:
-            janela_carregamento = encontrar_janela_carregamento()
+    if titulo == TITULO_NAO_ENCONTRADO:
+        pyautogui.press("enter")
+        executar_ficha(nome_funcionario, ano, controles)
 
-            if janela_carregamento is not None:
-                print("Janela de carregamento encontrada.")
+    if titulo == TITULO_ERRO:
+        tratar_erro()
 
-        # Verifica se apareceu erro
-        if tratar_erro():
-            print("Erro tratado.")
+    if titulo == TITULO_FICHA:
+        print("Relatório aberto no preview.")
+        
+        clicar_botao_preview()
 
-            if janela_carregamento is not None:
-                if clicar_controle(janela_carregamento, "Cancelar"):
-                    print("Clicando em 'Cancelar'.")
-                    return "erro"
+        salvo = imprimir_como_pdf(
+            nome_funcionario,
+            ano
+        )
 
-                print("Botão 'Cancelar' não encontrado.")
-                return None
+        if salvo:
+            fechar_preview()
 
-            print("Janela de carregamento não foi localizada.")
-            return None
+        return "preview"
 
-        # Verifica se abriu o preview
-        if tela_atual == "Preview":
-            print("Relatório aberto no preview.")
-
-            clicar_botao_preview()
-
-            salvo = imprimir_como_pdf(
-                nome_funcionario,
-                ano
-            )
-
-            if salvo:
-                fechar_preview()
-
-            return "preview"
-
-        time.sleep(0.2)
 
 
 def get_screen_name():
@@ -211,8 +201,25 @@ def alterar_ano(ano, controles):
 
 
 def executar_ficha(nome_funcionario, ano, controles):
-    botao_ok = None
+    clicar_ok(controles)
+    
+    # Trata o resultado do processamento.
+    resultado = processar_resultado(
+        nome_funcionario,
+        ano
+    )
 
+    if resultado == "erro":
+        print("Fluxo de erro concluído.")
+
+    elif resultado == "preview":
+        fechar_preview()
+        print("Processamento concluído.")
+
+
+def clicar_ok(controles):
+    botao_ok = None
+    
     for controle in controles:
         try:
             if (
@@ -234,19 +241,6 @@ def executar_ficha(nome_funcionario, ano, controles):
     botao_ok.click()
 
     print("OK clicado.")
-
-    # Trata o resultado do processamento.
-    resultado = processar_resultado(
-        nome_funcionario,
-        ano
-    )
-
-    if resultado == "erro":
-        print("Fluxo de erro concluído.")
-
-    elif resultado == "preview":
-        fechar_preview()
-        print("Processamento concluído.")
 
 
 def clicar_botao_preview():
@@ -679,15 +673,9 @@ def preencher_matricula(matricula, controles):
 
     campo_matricula.set_focus()
 
-    time.sleep(0.1)
+    campo_matricula.type_keys("^a")
 
-    campo_matricula.type_keys(
-        "^a"
-    )
-
-    campo_matricula.type_keys(
-        str(matricula)
-    )
+    campo_matricula.type_keys(str(matricula))
 
     print(
         "Matrícula preenchida:",
@@ -873,27 +861,39 @@ def localizar_janela(titulo_esperado):
     return None
 
 
-def aguardar_janela(titulo_esperado, timeout=TEMPO_LIMITE):
+def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
     """
-    Aguarda até a janela aparecer.
-    Retorna o objeto da janela ou None se atingir o limite.
-    """
-    print(f"[INFO] Aguardando a janela: {titulo_esperado}")
+    Aguarda até que uma janela com um dos títulos informados apareça.
 
-    limite = time.monotonic() + timeout
+    Args:
+        *titulos_esperados: Um ou mais títulos de janelas.
+        time_limit: Tempo máximo de espera, em segundos.
+
+    Returns:
+        Objeto pywinauto da primeira janela encontrada ou None.
+    """
+    print(
+        f"[INFO] Aguardando uma das janelas: "
+        f"{', '.join(titulos_esperados)}"
+    )
+
+    limite = time.monotonic() + time_limit
 
     while time.monotonic() < limite:
-        janela = localizar_janela(titulo_esperado)
+        for titulo in titulos_esperados:
+            janela = localizar_janela(titulo)
 
-        if janela is not None:
-            return janela
+            if janela is not None:
+                return janela
 
         time.sleep(INTERVALO_VERIFICACAO)
 
     print(
-        f"[ERRO] A janela '{titulo_esperado}' "
-        f"não apareceu em {timeout} segundos."
+        f"[INFO] Nenhuma das janelas apareceu em "
+        f"{time_limit} segundos: "
+        f"{', '.join(titulos_esperados)}"
     )
+
     return None
 
 
@@ -1046,7 +1046,7 @@ def main():
             "O ano inicial não pode ser maior que o ano final."
         )
 
-    if not preencher_matricula(args.mat):
+    if not preencher_matricula(args.mat, controles):
         print("Não foi possível preencher a matrícula.")
         return
 
