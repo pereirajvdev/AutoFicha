@@ -387,13 +387,12 @@ def imprimir_como_pdf(nome_funcionario, ano):
 
 
 def salvar_pdf(nome_funcionario, ano):
-    desktop = Desktop(backend="win32")
 
     print("Aguardando janela para salvar PDF...")
 
     janela = aguardar_janela(TITULO_SAIDA_IMPRESSAO)
     janela.set_focus()
-    
+
     print("Janela de salvamento encontrada.")
     print("Título:", janela.window_text())
 
@@ -441,10 +440,7 @@ def salvar_pdf(nome_funcionario, ano):
 
     # Define o caminho completo
     campo_nome.set_focus()
-    campo_nome.type_keys(
-        str(caminho_arquivo),
-        with_spaces=True
-    )
+    campo_nome.set_edit_text(str(caminho_arquivo))
 
     print("Nome do arquivo preenchido.")
 
