@@ -8,16 +8,25 @@ from pathlib import Path
 from datetime import datetime, date
 from openpyxl import load_workbook
 
-TITULO_JANELA = (
+TITULO_GERADOR = (
     "Gerador de Relatórios "
     "( Versão: 4.0 ) - Recursos Humanos e Folha de Pagamento"
 )
 
 TITULO_ERRO = "Erro Não Previsto"
 
+TITULO_SAIDA_IMPRESSAO = "Salvar saída de impressão como"
+
+TITULO_FICHA = "Ficha_Financeira_Resumo_Geral"
+
+TITULO_IMPRIMIR = "Imprimir"
+
 DIRETORIO_SERVIDORES = Path(
     r"C:\Users\Joao Castro\Desktop\JOAO\Servidores"
 )
+
+TEMPO_LIMITE = 60
+INTERVALO_VERIFICACAO = 1
 
 def clicar_controle(janela, texto):
     controles = janela.descendants()
@@ -153,11 +162,11 @@ def get_screen_name():
             titulo = janela.window_text()
             classe = janela.class_name()
 
-            if titulo == TITULO_JANELA:
+            if titulo == TITULO_GERADOR:
                 return "Gerador"
 
             if (
-                titulo == "Ficha_Financeira_Resumo_Geral"
+                titulo == TITULO_FICHA
                 and classe == "TfrmPreview"
             ):
                 return "Preview"
@@ -168,28 +177,9 @@ def get_screen_name():
     return "Desconhecida"
 
 
-def alterar_ano(ano):
-    desktop = Desktop(backend="win32")
-
-    janela = desktop.window(title=TITULO_JANELA)
-
-    if not janela.exists(timeout=5):
-        print("Janela do Gerador de Relatórios não encontrada.")
-        return
-
-    print("Janela encontrada.")
-
-    nome_funcionario = obter_nome_funcionario(janela)
-
-    if nome_funcionario is None:
-        print("Nome do funcionário não encontrado.")
-        return
-
-    print("Funcionário:", nome_funcionario)
-    
-    controles = janela.descendants()
+def alterar_ano(ano, controles):    
     campo_ano = None
-
+    
     for controle in controles:
         try:
             if controle.class_name() != "TcxCustomInnerTextEdit":
@@ -203,7 +193,7 @@ def alterar_ano(ano):
 
         except Exception:
             pass
-
+        
     if campo_ano is None:
         print("Campo do ano não encontrado.")
         return
@@ -219,6 +209,8 @@ def alterar_ano(ano):
 
     print("Valor depois da alteração:", campo_ano.window_text())
 
+
+def executar_ficha(nome_funcionario, ano, controles):
     botao_ok = None
 
     for controle in controles:
@@ -253,6 +245,7 @@ def alterar_ano(ano):
         print("Fluxo de erro concluído.")
 
     elif resultado == "preview":
+        fechar_preview()
         print("Processamento concluído.")
 
 
@@ -348,7 +341,7 @@ def imprimir_como_pdf(nome_funcionario, ano):
         print("Erro ao selecionar impressora:", e)
         return False
 
-    time.sleep(0.5)
+    time.sleep(0.05)
 
     print(
         "Impressora depois da seleção:",
@@ -385,6 +378,10 @@ def imprimir_como_pdf(nome_funcionario, ano):
 
     print("OK da impressão clicado.")
 
+    # verifica se a impressão está aberta
+    janela = aguardar_janela(TITULO_SAIDA_IMPRESSAO)
+    janela.set_focus()
+
     # Aguarda a janela "Salvar saída de impressão como"
     return salvar_pdf(nome_funcionario, ano)
 
@@ -394,23 +391,9 @@ def salvar_pdf(nome_funcionario, ano):
 
     print("Aguardando janela para salvar PDF...")
 
-    janela = None
-
-    while janela is None:
-        for item in desktop.windows():
-            try:
-                if (
-                    item.is_visible()
-                    and item.class_name() == "#32770"
-                ):
-                    janela = item
-                    break
-            except Exception:
-                pass
-
-        if janela is None:
-            time.sleep(0.2)
-
+    janela = aguardar_janela(TITULO_SAIDA_IMPRESSAO)
+    janela.set_focus()
+    
     print("Janela de salvamento encontrada.")
     print("Título:", janela.window_text())
 
@@ -585,46 +568,28 @@ def obter_nome_funcionario(janela):
 
         except Exception:
             pass
-
-    return None
+        
+    print("Nome do funcionário não encontrado.")
+    return input("Digite o nome a ser considerado: ")
 
 
 def fechar_preview():
-    desktop = Desktop(backend="win32")
 
-    for janela in desktop.windows():
-        try:
-            if (
-                janela.window_text() == "Ficha_Financeira_Resumo_Geral"
-                and janela.class_name() == "TfrmPreview"
-            ):
-                print("Fechando Ficha_Financeira_Resumo_Geral...")
+    janela = aguardar_janela(TITULO_FICHA)
+    janela.set_focus()
 
-                janela.close()
+    print("Fechando Ficha_Financeira_Resumo_Geral...")
 
-                time.sleep(0.5)
+    janela.close()
 
-                print("Preview fechado.")
-                return True
-
-        except Exception:
-            pass
-
-    print("Preview não encontrado para fechar.")
-    return False
+    print("Preview fechado.")
+    return True
 
 
-def preencher_matricula(matricula):
-    desktop = Desktop(backend="win32")
+def preencher_matricula(matricula, controles):
 
-    janela = desktop.window(
-        title=TITULO_JANELA,
-        class_name="Tfm_fl_impressao_rel"
-    )
-
-    if not janela.exists(timeout=5):
-        print("Janela do Gerador de Relatórios não encontrada.")
-        return False
+    janela = aguardar_janela(TITULO_GERADOR)
+    janela.set_focus()
 
     print("Janela encontrada para preenchimento da matrícula.")
 
@@ -634,7 +599,7 @@ def preencher_matricula(matricula):
 
     aba_funcionario = None
 
-    for controle in janela.descendants():
+    for controle in controles:
         try:
             if (
                 controle.class_name() == "TcxTabSheet"
@@ -742,8 +707,6 @@ def preencher_matricula(matricula):
     )
 
     print("ENTER enviado para a matrícula.")
-
-    time.sleep(0.5)
 
     return True
 
@@ -895,6 +858,48 @@ def ler_vinculos(caminho_excel):
         wb.close()
 
 
+def localizar_janela(titulo_esperado):
+    """
+    Localiza uma janela pelo título ou por um trecho dele.
+    Retorna um objeto pywinauto ou None.
+    """
+    for janela in Desktop(backend="win32").windows():
+        try:
+            titulo = janela.window_text().strip()
+
+            if titulo_esperado.casefold() in titulo.casefold():
+                print(f"[OK] Janela identificada: {titulo}")
+                return janela
+
+        except Exception:
+            continue
+
+    return None
+
+
+def aguardar_janela(titulo_esperado, timeout=TEMPO_LIMITE):
+    """
+    Aguarda até a janela aparecer.
+    Retorna o objeto da janela ou None se atingir o limite.
+    """
+    print(f"[INFO] Aguardando a janela: {titulo_esperado}")
+
+    limite = time.monotonic() + timeout
+
+    while time.monotonic() < limite:
+        janela = localizar_janela(titulo_esperado)
+
+        if janela is not None:
+            return janela
+
+        time.sleep(INTERVALO_VERIFICACAO)
+
+    print(
+        f"[ERRO] A janela '{titulo_esperado}' "
+        f"não apareceu em {timeout} segundos."
+    )
+    return None
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -919,6 +924,14 @@ def main():
 
     args = parser.parse_args()
 
+    print("Esperando janela: {TITULO_GERADOR}\n")
+    janela = aguardar_janela(TITULO_GERADOR)
+    janela.set_focus()
+
+    print("Janela encontrada.")
+
+    controles = janela.descendants()
+    
     # ========================================================
     # MODO PADRÃO
     # ========================================================
@@ -932,11 +945,16 @@ def main():
         print(f"Matrícula: {matricula}")
         print(f"Ano: {ano_inicial}")
 
-        if not preencher_matricula(matricula):
+        if not preencher_matricula(matricula, controles):
             print("Não foi possível preencher a matrícula.")
             return
 
-        alterar_ano(ano_inicial)
+        alterar_ano(ano_inicial, controles)
+
+        nome_funcionario = obter_nome_funcionario(janela)
+        print("Funcionário:", nome_funcionario)
+        
+        executar_ficha(nome_funcionario, ano_inicial, controles)
         return
 
     
@@ -960,7 +978,7 @@ def main():
                 f"Preenchendo matrícula: {matricula}"
             )
 
-            if not preencher_matricula(matricula):
+            if not preencher_matricula(matricula, controles):
                 print(
                     f"ERRO ao preencher a matrícula {matricula}. "
                     "Processamento interrompido."
@@ -987,7 +1005,13 @@ def main():
 
             for ano in range(ano_inicial, ano_final + 1):
                 print(f"Processando matrícula {matricula}, ano {ano}...")
-                alterar_ano(ano)
+                alterar_ano(ano, controles)
+
+                nome_funcionario = obter_nome_funcionario(janela)
+                print("Funcionário:", nome_funcionario)
+
+                
+                executar_ficha(nome_funcionario, ano, controles)
 
         print()
         print("=" * 70)
@@ -1037,7 +1061,12 @@ def main():
         print(f"PROCESSANDO ANO: {ano}")
         print("=" * 70)
 
-        alterar_ano(ano)
+        alterar_ano(ano, controles)
+
+        nome_funcionario = obter_nome_funcionario(janela)
+        print("Funcionário:", nome_funcionario)
+        
+        executar_ficha(nome_funcionario, ano, controles)
 
 
 if __name__ == "__main__":
