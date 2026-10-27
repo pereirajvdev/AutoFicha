@@ -103,14 +103,8 @@ def tratar_erro():
 def processar_resultado(nome_funcionario, ano, controles):
     print("Aguardando resultado...")
 
-    tela_atual = get_screen_name()
-
-    if tela_atual != tela_anterior:
-        print(tela_atual)
-        tela_anterior = tela_atual
-
     # pode aparecer 2 janelas, erro ou preview
-    janela = aguardar_janela(TITULO_ERRO, TITULO_FICHA, time_limit=8)
+    janela = aguardar_janela(TITULO_ERRO, TITULO_FICHA, time_limit=16)
     janela.set_focus()
     if janela is None: 
         # clicar enter dps executar ficha
@@ -121,9 +115,9 @@ def processar_resultado(nome_funcionario, ano, controles):
     titulo = janela.window_text()
 
     if titulo == TITULO_NAO_ENCONTRADO:
-        pyautogui.press("enter")
-        executar_ficha(nome_funcionario, ano, controles)
-
+        input("Sistema possivelmente caiu, aguarde estabilidade. \n")
+        return
+    
     if titulo == TITULO_ERRO:
         tratar_erro()
 
@@ -141,30 +135,6 @@ def processar_resultado(nome_funcionario, ano, controles):
             fechar_preview()
 
         return "preview"
-
-
-
-def get_screen_name():
-    desktop = Desktop(backend="win32")
-
-    for janela in desktop.windows():
-        try:
-            titulo = janela.window_text()
-            classe = janela.class_name()
-
-            if titulo == TITULO_GERADOR:
-                return "Gerador"
-
-            if (
-                titulo == TITULO_FICHA
-                and classe == "TfrmPreview"
-            ):
-                return "Preview"
-
-        except Exception:
-            pass
-
-    return "Desconhecida"
 
 
 def alterar_ano(ano, controles):    
@@ -206,7 +176,8 @@ def executar_ficha(nome_funcionario, ano, controles):
     # Trata o resultado do processamento.
     resultado = processar_resultado(
         nome_funcionario,
-        ano
+        ano,
+        controles
     )
 
     if resultado == "erro":
@@ -255,27 +226,10 @@ def clicar_botao_preview():
 
 
 def imprimir_como_pdf(nome_funcionario, ano):
-    desktop = Desktop(backend="win32")
-
     print("Aguardando janela de impressão...")
 
-    janela = None
-
-    while janela is None:
-        janelas = desktop.windows(
-            class_name="TfrPrintForm"
-        )
-
-        for item in janelas:
-            try:
-                if item.is_visible():
-                    janela = item
-                    break
-            except Exception:
-                pass
-
-        if janela is None:
-            time.sleep(0.2)
+    janela = aguardar_janela(TITULO_IMPRIMIR)
+    janela.set_focus()
 
     print("Janela de impressão encontrada.")
     print("Handle:", janela.handle)
@@ -564,15 +518,17 @@ def obter_nome_funcionario(janela):
 
 
 def fechar_preview():
+    try:
+        janela = aguardar_janela(TITULO_FICHA)
+        janela.set_focus()
 
-    janela = aguardar_janela(TITULO_FICHA)
-    janela.set_focus()
+        print("Fechando Ficha_Financeira_Resumo_Geral...")
 
-    print("Fechando Ficha_Financeira_Resumo_Geral...")
+        janela.close()
 
-    janela.close()
-
-    print("Preview fechado.")
+        print("Preview fechado.")
+    except:
+        pass
     return True
 
 
@@ -863,15 +819,48 @@ def localizar_janela(titulo_esperado):
 
 def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
     """
-    Aguarda até que uma janela com um dos títulos informados apareça.
+    Aguarda uma janela com um dos títulos informados.
+
+    Se encontrar uma janela correspondente com "Não está respondendo",
+    aguarda até que ela volte a responder.
 
     Args:
         *titulos_esperados: Um ou mais títulos de janelas.
-        time_limit: Tempo máximo de espera, em segundos.
+        time_limit: Tempo máximo de espera normal, em segundos.
 
     Returns:
-        Objeto pywinauto da primeira janela encontrada ou None.
+        Objeto pywinauto da primeira janela válida encontrada ou None.
     """
+
+    def ciclar(*titulos):
+        for titulo_esperado in titulos:
+            janela = localizar_janela(titulo_esperado)
+
+            if janela is None:
+                continue
+
+            try:
+                titulo_real = janela.window_text().strip()
+
+                if "Não está respondendo" in titulo_real:
+                    print(
+                        f"[AGUARDANDO] Janela sem resposta: "
+                        f"{titulo_real}"
+                    )
+                    continue
+
+                print(
+                    f"[OK] Esse é o título: {titulo_real} "
+                    f"|| verificação: "
+                    f"{'Não está respondendo' not in titulo_real}"
+                )
+                return janela
+
+            except Exception as erro:
+                print(f"[AVISO] Não foi possível verificar a janela: {erro}")
+
+        return None
+
     print(
         f"[INFO] Aguardando uma das janelas: "
         f"{', '.join(titulos_esperados)}"
@@ -879,22 +868,29 @@ def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
 
     limite = time.monotonic() + time_limit
 
-    while time.monotonic() < limite:
-        for titulo in titulos_esperados:
-            janela = localizar_janela(titulo)
+    while True:
+        janela = ciclar(*titulos_esperados)
 
-            if janela is not None:
-                return janela
+        if janela is not None:
+            return janela
+
+        # Se o prazo normal terminou, pede intervenção ao usuário.
+        if time.monotonic() >= limite:
+            print(
+                f"[INFO] Nenhuma janela válida apareceu em "
+                f"{time_limit} segundos: "
+                f"{', '.join(titulos_esperados)}"
+            )
+
+            input(
+                f"Abra ou aguarde uma destas janelas: "
+                f"{', '.join(titulos_esperados)}\n"
+            )
+
+            # Após a intervenção, continua aguardando.
+            limite = time.monotonic() + time_limit
 
         time.sleep(INTERVALO_VERIFICACAO)
-
-    print(
-        f"[INFO] Nenhuma das janelas apareceu em "
-        f"{time_limit} segundos: "
-        f"{', '.join(titulos_esperados)}"
-    )
-
-    return None
 
 
 def main():
