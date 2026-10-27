@@ -103,14 +103,15 @@ def tratar_erro():
 def processar_resultado(nome_funcionario, ano, controles):
     print("Aguardando resultado...")
 
-    # pode aparecer 2 janelas, erro ou preview
-    janela = aguardar_janela(TITULO_ERRO, TITULO_FICHA, time_limit=16)
-    janela.set_focus()
+    # pode aparecer 3 janelas, erro, nao encontrado ou preview
+    janela = aguardar_janela(TITULO_ERRO, TITULO_FICHA, time_limit=20)
+    
     if janela is None: 
         # clicar enter dps executar ficha
         pyautogui.press("enter")
         executar_ficha(nome_funcionario, ano, controles)
         
+    janela.set_focus()
 
     titulo = janela.window_text()
 
@@ -819,21 +820,24 @@ def localizar_janela(titulo_esperado):
 
 def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
     """
-    Aguarda uma janela com um dos títulos informados.
-
-    Se encontrar uma janela correspondente com "Não está respondendo",
-    aguarda até que ela volte a responder.
+    Aguarda até que uma janela com um dos títulos informados apareça.
 
     Args:
         *titulos_esperados: Um ou mais títulos de janelas.
-        time_limit: Tempo máximo de espera normal, em segundos.
+        time_limit: Tempo máximo de espera, em segundos.
 
     Returns:
         Objeto pywinauto da primeira janela válida encontrada ou None.
     """
+    print(
+        f"[INFO] Aguardando uma das janelas: "
+        f"{', '.join(titulos_esperados)}"
+    )
 
-    def ciclar(*titulos):
-        for titulo_esperado in titulos:
+    limite = time.monotonic() + time_limit
+
+    while time.monotonic() < limite:
+        for titulo_esperado in titulos_esperados:
             janela = localizar_janela(titulo_esperado)
 
             if janela is None:
@@ -849,48 +853,30 @@ def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
                     )
                     continue
 
+                a = "Não está respondendo" not in titulo_real
+
                 print(
-                    f"[OK] Esse é o título: {titulo_real} "
-                    f"|| verificação: "
-                    f"{'Não está respondendo' not in titulo_real}"
+                    f"Esse eh o titulo: {titulo_real} "
+                    f"|| verificação {a}"
                 )
+
                 return janela
 
             except Exception as erro:
-                print(f"[AVISO] Não foi possível verificar a janela: {erro}")
+                print(
+                    f"[AVISO] Erro ao verificar o título da janela: "
+                    f"{erro}"
+                )
 
-        return None
+        time.sleep(INTERVALO_VERIFICACAO)
 
     print(
-        f"[INFO] Aguardando uma das janelas: "
+        f"[INFO] Nenhuma janela válida apareceu em "
+        f"{time_limit} segundos: "
         f"{', '.join(titulos_esperados)}"
     )
 
-    limite = time.monotonic() + time_limit
-
-    while True:
-        janela = ciclar(*titulos_esperados)
-
-        if janela is not None:
-            return janela
-
-        # Se o prazo normal terminou, pede intervenção ao usuário.
-        if time.monotonic() >= limite:
-            print(
-                f"[INFO] Nenhuma janela válida apareceu em "
-                f"{time_limit} segundos: "
-                f"{', '.join(titulos_esperados)}"
-            )
-
-            input(
-                f"Abra ou aguarde uma destas janelas: "
-                f"{', '.join(titulos_esperados)}\n"
-            )
-
-            # Após a intervenção, continua aguardando.
-            limite = time.monotonic() + time_limit
-
-        time.sleep(INTERVALO_VERIFICACAO)
+    return None
 
 
 def main():
