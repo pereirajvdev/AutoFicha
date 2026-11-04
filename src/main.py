@@ -37,6 +37,7 @@ TITULO_SAIDA_IMPRESSAO = "Salvar saída de impressão como"
 TITULO_CONFIRMAR_SOBRESCRITA = "Confirmar Salvar como"
 TITULO_FICHA = "Ficha_Financeira_Resumo_Geral"
 TITULO_IMPRIMIR = "Imprimir"
+TITULO_PREPARANDO_IMPRESSAO = "Preparando - Ficha_Financeira_Resumo_Geral"
 
 DIRETORIO_SERVIDORES = Path(
     r"C:\Users\Joao Castro\Desktop\JOAO\Servidores"
@@ -48,7 +49,7 @@ IMPRESSORA_PDF = "Microsoft Print to PDF"
 BOTAO_PREVIEW_XY = (306, 39)
 
 TEMPO_LIMITE = 60
-TEMPO_RESULTADO = 20
+TEMPO_RESULTADO = 180
 INTERVALO_VERIFICACAO = 0.3
 MAX_TENTATIVAS_FICHA = 3
 
@@ -548,7 +549,10 @@ def executar_ficha(nome_funcionario, ano, controles):
                 f"Nenhuma janela apareceu (tentativa {tentativa}/"
                 f"{MAX_TENTATIVAS_FICHA}). Enviando ENTER."
             )
-            keyboard.send_keys("{ENTER}")
+            janela = aguardar_janela(TITULO_PREPARANDO_IMPRESSAO)
+            janela.set_focus()
+            janela.close()
+
         else:
             print(
                 f"Resultado {resultado!r} (tentativa {tentativa}/"
