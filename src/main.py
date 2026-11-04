@@ -287,7 +287,7 @@ def localizar_janela(titulo_esperado):
         return None
 
     hwnd, titulo = achado
-    log_debug(f"[OK] Janela identificada: {titulo}")
+    log_debug(f"Janela identificada: {titulo}")
     return _criar_wrapper(hwnd)
 
 
@@ -297,7 +297,7 @@ def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
     Aguarda até que uma janela com um dos títulos apareça.
     Retorna o wrapper (seguindo a ordem dos títulos) ou None no timeout.
     """
-    print(f"[INFO] Aguardando uma das janelas: {', '.join(titulos_esperados)}")
+    print(f"Aguardando uma das janelas: {', '.join(titulos_esperados)}")
 
     limite = time.monotonic() + time_limit
 
@@ -307,7 +307,7 @@ def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
 
         if achado is not None:
             hwnd, titulo = achado
-            print(f"[OK] Janela identificada: {titulo}")
+            print(f"Janela identificada: {titulo}")
             return _criar_wrapper(hwnd)
 
         if time.monotonic() >= limite:
@@ -316,7 +316,7 @@ def aguardar_janela(*titulos_esperados, time_limit=TEMPO_LIMITE):
         time.sleep(INTERVALO_VERIFICACAO)
 
     print(
-        f"[INFO] Nenhuma janela válida apareceu em {time_limit} segundos: "
+        f"Nenhuma janela válida apareceu em {time_limit} segundos: "
         f"{', '.join(titulos_esperados)}"
     )
     return None
@@ -537,16 +537,16 @@ def executar_ficha(nome_funcionario, ano, controles):
         resultado = processar_resultado(nome_funcionario, ano)
 
         if resultado == "preview":
-            print("Processamento concluído.")
+            print("[OK] Processamento concluído.")
             return resultado
 
         if resultado == "erro":
-            print("Fluxo de erro concluído.")
+            print("[ERRO] Fluxo de erro concluído.")
             return resultado
 
         if resultado == "sem_janela":
             print(
-                f"Nenhuma janela apareceu (tentativa {tentativa}/"
+                f"[ERRO] Nenhuma janela apareceu (tentativa {tentativa}/"
                 f"{MAX_TENTATIVAS_FICHA}). Enviando ENTER."
             )
             janela = aguardar_janela(TITULO_PREPARANDO_IMPRESSAO)
