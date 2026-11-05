@@ -1121,6 +1121,8 @@ def executar(args, parser):
 
     print("=" * 70)
 
+    return not falhas
+
 
 def main():
     global PERF_ATIVO, DEBUG, DIRETORIO_SERVIDORES
