@@ -6,6 +6,7 @@ Uso:
     python main.py vinculos.xlsx          # colunas: matrícula | início | fim
     python main.py --mat 22057 2017-2018  # matrícula + intervalo (ou um ano só)
     python main.py --padrao               # matrícula 3198, ano 2026
+    python main.py --servidores "<dir>" --registros "<json>"   # chamado pelo painel
 
 Opções: --perf (relatório de tempos), --debug (diagnóstico detalhado)
 """
@@ -13,6 +14,8 @@ Opções: --perf (relatório de tempos), --debug (diagnóstico detalhado)
 import argparse
 import ctypes
 import time
+import json
+import sys
 from contextlib import contextmanager
 from ctypes import wintypes
 from datetime import date, datetime
@@ -773,6 +776,15 @@ def _obter_listboxes(janela):
     return listboxes
 
 
+def perguntar(mensagem):
+    """input() só quando há terminal; pelo painel, falha com mensagem clara."""
+    if not sys.stdin or not sys.stdin.isatty():
+        raise RuntimeError(
+            f"{mensagem.strip()} (sem terminal interativo: resolva e execute de novo)"
+        )
+    return input(mensagem)
+
+
 @cronometrar()
 def obter_nome_funcionario(janela):
     for listbox in _obter_listboxes(janela):
@@ -962,6 +974,44 @@ def _parse_intervalo(texto, parser):
     return list(range(ano_inicial, ano_final + 1))
 
 
+def vinculos_de_registros(texto, parser):
+    """JSON do painel (anos) -> mesmo formato devolvido por ler_vinculos()."""
+    try:
+        dados = json.loads(texto)
+        if not isinstance(dados, list) or not dados:
+            raise ValueError("esperada uma lista não vazia")
+
+        vinculos = []
+        for i, d in enumerate(dados, start=1):
+            inicio, fim = int(d["inicio"]), int(d["fim"])
+            if inicio > fim:
+                raise ValueError(f"registro {i}: ano inicial maior que o final")
+            vinculos.append({
+                "matricula": int(d["matricula"]),
+                "inicio": date(inicio, 1, 1),
+                "fim": date(fim, 12, 31),
+            })
+    except (ValueError, TypeError, KeyError) as exc:
+        parser.error(f"--registros inválido: {exc}")
+
+    return vinculos
+
+
+def _plano_de_vinculos(vinculos):
+    # Sem duplicatas, mantendo a ordem de entrada.
+    matriculas = list(dict.fromkeys(v["matricula"] for v in vinculos))
+
+    # Todas as matrículas ficam na seleção ao mesmo tempo, então a
+    # ficha de cada ano é gerada UMA vez, cobrindo a união dos anos
+    # de todos os vínculos.
+    anos = sorted({
+        ano
+        for v in vinculos
+        for ano in range(v["inicio"].year, v["fim"].year + 1)
+    })
+    return matriculas, anos
+
+
 def montar_plano(args, parser):
     """
     Valida a entrada ANTES de mexer na interface.
@@ -971,22 +1021,11 @@ def montar_plano(args, parser):
         print("MODO PADRÃO")
         return [3198], [2026]
 
+    if args.registros:
+        return _plano_de_vinculos(vinculos_de_registros(args.registros, parser))
+
     if args.entrada and args.entrada.lower().endswith(".xlsx"):
-        vinculos = ler_vinculos(args.entrada)
-
-        # Sem duplicatas, mantendo a ordem do arquivo.
-        matriculas = list(dict.fromkeys(v["matricula"] for v in vinculos))
-
-        # Todas as matrículas ficam na seleção ao mesmo tempo, então a
-        # ficha de cada ano é gerada UMA vez, cobrindo a união dos anos
-        # de todos os vínculos.
-        anos = sorted({
-            ano
-            for v in vinculos
-            for ano in range(v["inicio"].year, v["fim"].year + 1)
-        })
-
-        return matriculas, anos
+        return _plano_de_vinculos(ler_vinculos(args.entrada))
 
     if args.mat is None:
         parser.error(
@@ -1084,7 +1123,7 @@ def executar(args, parser):
 
 
 def main():
-    global PERF_ATIVO, DEBUG
+    global PERF_ATIVO, DEBUG, DIRETORIO_SERVIDORES
 
     parser = argparse.ArgumentParser()
 
@@ -1111,16 +1150,38 @@ def main():
         action="store_true",
         help="Exibe mensagens detalhadas de diagnóstico",
     )
+    parser.add_argument(
+        "--servidores",
+        help="Pasta onde ficam as pastas dos servidores (sobrescreve o padrão)",
+    )
+    parser.add_argument(
+        "--registros",
+        help='JSON de vínculos do painel: [{"matricula":"1234","inicio":2017,"fim":2019}]',
+    )
+    parser.add_argument(
+        "--pasta",
+        help="Enviado pelo painel; ainda não utilizado pelo AutoFicha",
+    )
 
     args = parser.parse_args()
 
     PERF_ATIVO = args.perf
     DEBUG = args.debug
 
+    if args.servidores:
+        pasta = Path(args.servidores)
+        if not pasta.is_dir():
+            parser.error(f"Pasta de servidores não encontrada: {pasta}")
+        DIRETORIO_SERVIDORES = pasta
+
+    if args.pasta:
+        print(f"[AVISO] --pasta ({args.pasta}) não é usado pelo AutoFicha; ignorado.")
+
     inicio_execucao = time.perf_counter()
 
+    ok = False
     try:
-        executar(args, parser)
+        ok = executar(args, parser)
     finally:
         tempo_total = time.perf_counter() - inicio_execucao
 
@@ -1130,7 +1191,8 @@ def main():
 
         # Detalhamento por etapa (só com --perf)
         imprimir_relatorio_tempos()
-
+    if not ok:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
