@@ -11,6 +11,7 @@ Uso:
 Opções: --perf (relatório de tempos), --debug (diagnóstico detalhado)
 """
 
+import subprocess
 import argparse
 import ctypes
 import time
@@ -30,6 +31,12 @@ from pywinauto import Desktop, keyboard, mouse
 # CONFIGURAÇÃO
 # ======================================================================
 
+TITULO_INICIAL = (
+    "- Recursos Humanos e Folha de Pagamento "
+    "[ Versão 3.02 - 17/06/2026 ] "
+    "( 066 - RITA DE CASSIA CARVALHO BRANQUINHO )"
+)
+TITULO_PRINCIPAL = "PREFEITURA MUNICIPAL DE TRÊS CORAÇÕES - Recursos Humanos e Folha de Pagamento"
 TITULO_GERADOR = (
     "Gerador de Relatórios "
     "( Versão: 4.0 ) - Recursos Humanos e Folha de Pagamento"
@@ -41,12 +48,21 @@ TITULO_CONFIRMAR_SOBRESCRITA = "Confirmar Salvar como"
 TITULO_FICHA = "Ficha_Financeira_Resumo_Geral"
 TITULO_IMPRIMIR = "Imprimir"
 TITULO_PREPARANDO_IMPRESSAO = "Preparando - Ficha_Financeira_Resumo_Geral"
+TITULO_TESTE = "Teste"
 
 DIRETORIO_SERVIDORES = Path(
     r"C:\Users\Joao Castro\Desktop\JOAO\Servidores"
 )
 
+SCRIPT = Path(
+    r"C:\Users\Joao Castro\Documents\FolhaInicio\src\main.py"
+)
+
 IMPRESSORA_PDF = "Microsoft Print to PDF"
+
+TEMPO_FOLHA_INICIO = 180      # segundos para o FolhaInicio terminar
+INTERVALO_TECLAS = 0.3        # pausa entre as teclas do atalho
+ATALHO_FICHA = ("{VK_MENU}", "e", "0", "s")   # Alt (sozinho) -> E -> 0 -> S
 
 # Coordenadas (tela) do botão de imprimir no preview.
 BOTAO_PREVIEW_XY = (306, 39)
@@ -1039,6 +1055,327 @@ def montar_plano(args, parser):
     return [args.mat], _parse_intervalo(args.entrada, parser)
 
 
+def folhaInicio():
+
+    print()
+    print("=" * 80)
+    print("EXECUTANDO FOLHA INÍCIO")
+    print("=" * 80)
+
+    print(f"Script: {SCRIPT}")
+    print(f"Existe: {SCRIPT.exists()}")
+    print(f"Diretório: {SCRIPT.parent}")
+    print(f"Diretório existe: {SCRIPT.parent.exists()}")
+
+    if not SCRIPT.exists():
+
+        print(
+            "ERRO: main.py do FolhaInicio não encontrado."
+        )
+
+        return None
+
+    if not SCRIPT.parent.is_dir():
+
+        print(
+            "ERRO: diretório do FolhaInicio inválido."
+        )
+
+        return None
+
+    processo = subprocess.Popen(
+        ["python", str(SCRIPT)],
+        cwd=str(SCRIPT.parent)
+    )
+
+    return processo
+
+def _construir_arvore_janelas():
+    """
+    Enumera as janelas uma única vez (Desktop win32), aplica os filtros originais
+    e monta a hierarquia (filhas via GA_PARENT, proprietárias via GW_OWNER).
+
+    Retorna (nos, raizes, raiz_de):
+      nos     : {hwnd: {"titulo": str, "filhos": [hwnd, ...]}}  (ordem de enumeração)
+      raizes  : [hwnd, ...] janelas sem relação com outra janela exibida
+      raiz_de : {hwnd: hwnd_da_raiz} árvore à qual cada janela pertence
+    """
+    import ctypes
+    from ctypes import wintypes
+    from pywinauto import Desktop
+
+    ignorar = {
+        "lidDialog",
+        "DataSetValidDialog",
+        "Chart editor",
+        "Editor de Cross-tab",
+        "Dictionary editor",
+        "Rich Edit",
+        "Task Host Window",
+        "CDA Server",
+        "RadeonSoftware",
+        "WUIconWindow",
+        "OneDrive",
+        "ad_msg_wnd",
+        "Window",
+        "Program Manager",
+        "Default IME",
+        "M",
+    }
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetWindow.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.GetDesktopWindow.argtypes = []
+    user32.GetDesktopWindow.restype = wintypes.HWND
+
+    GW_OWNER = 4
+    GA_PARENT = 1
+    desktop_hwnd = user32.GetDesktopWindow()
+
+    # 1) Descoberta + filtros originais
+    nos = {}
+    ordem = []
+    try:
+        janelas = Desktop(backend="win32").windows()
+    except Exception:
+        janelas = []
+
+    for janela in janelas:
+        try:
+            titulo = janela.window_text().strip()
+
+            if not titulo:
+                continue
+
+            if titulo in ignorar:
+                continue
+
+            if "GDI+ Window" in titulo:
+                continue
+
+            if "cmd.exe" in titulo.lower():
+                continue
+
+            if "C:\\Windows" in titulo:
+                continue
+
+            if "AMD" in titulo:
+                continue
+
+            if "Microsoft" in titulo:
+                continue
+
+            if "Realtek" in titulo:
+                continue
+
+            if "Bluetooth" in titulo:
+                continue
+
+            if "HiddenFax" in titulo:
+                continue
+
+            if ".NET-BroadcastEventWindow" in titulo:
+                continue
+
+            hwnd = janela.handle
+            if hwnd in nos:
+                continue
+
+            nos[hwnd] = {"titulo": titulo, "filhos": []}
+            ordem.append(hwnd)
+
+        except Exception:
+            # janela deixou de existir durante a consulta
+            pass
+
+    # 2) Relação direta: filha real (GA_PARENT) > proprietária (GW_OWNER)
+    def pai_direto(hwnd):
+        pai = user32.GetAncestor(hwnd, GA_PARENT)
+        if pai and pai != desktop_hwnd:
+            return pai
+        return user32.GetWindow(hwnd, GW_OWNER) or None
+
+    # 3) Sobe a cadeia até um ancestral presente entre as janelas descobertas
+    def resolver_pai(hwnd):
+        visitados = {hwnd}
+        candidato = pai_direto(hwnd)
+        while candidato and candidato not in visitados:
+            if candidato in nos:
+                return candidato
+            visitados.add(candidato)
+            candidato = pai_direto(candidato)
+        return None
+
+    pais = {}
+    raizes = []
+    for hwnd in ordem:
+        try:
+            pai = resolver_pai(hwnd)
+        except Exception:
+            pai = None
+        pais[hwnd] = pai
+        if pai is None:
+            raizes.append(hwnd)
+        else:
+            nos[pai]["filhos"].append(hwnd)
+
+    # 4) Raiz de cada janela (com memoização e proteção contra ciclos)
+    raiz_de = {}
+    for hwnd in ordem:
+        if hwnd in raiz_de:
+            continue
+        caminho = []
+        atual = hwnd
+        while atual is not None and atual not in raiz_de and atual not in caminho:
+            caminho.append(atual)
+            atual = pais[atual]
+        raiz = raiz_de[atual] if atual in raiz_de else caminho[-1]
+        for h in caminho:
+            raiz_de[h] = raiz
+
+    return nos, raizes, raiz_de
+
+
+def deve_ser_resetado(*titulos):
+    """
+    True  -> alguma árvore encontrada possui janela não informada.
+    False -> nenhuma árvore encontrada possui janela não informada.
+    """
+
+    alvo = {str(t).strip() for t in titulos}
+
+    print("\n" + "=" * 70)
+    print("[ARVORE] Verificando existência de janelas inesperadas")
+    print("=" * 70)
+
+    print(f"[ALVO] {alvo}")
+
+    if not alvo:
+        print("[AVISO] Nenhum título informado.")
+        return False
+
+    try:
+        nos, raizes, raiz_de = _construir_arvore_janelas()
+
+        print(f"[INFO] Janelas identificadas: {len(nos)}")
+        print(f"[INFO] Árvores identificadas: {len(raizes)}")
+
+        encontrados = {
+            h: no
+            for h, no in nos.items()
+            if no["titulo"].strip() in alvo
+        }
+
+        # Regra obrigatória: nenhum título encontrado -> False imediato.
+        # Outras janelas independentes nunca são motivo para retornar True.
+        if not encontrados:
+            print("\n[RESULTADO] False")
+            print("[MOTIVO] Nenhum dos títulos informados foi encontrado.")
+            return True
+
+        # A partir daqui pelo menos um título foi confirmado.
+        arvores = {raiz_de[h] for h in encontrados}
+
+        print(f"\n[ENCONTRADOS] {len(encontrados)}")
+
+        for hwnd, no in encontrados.items():
+            raiz = raiz_de[hwnd]
+            print(
+                f"  [OK] {no['titulo']} "
+                f"| HWND={hwnd} "
+                f"| Raiz={nos[raiz]['titulo']}"
+            )
+
+        print(f"\n[INFO] Árvores relevantes: {len(arvores)}")
+
+        inesperadas = []
+
+        for hwnd, no in nos.items():
+            raiz = raiz_de[hwnd]
+
+            if raiz not in arvores:
+                continue
+
+            titulo = no["titulo"].strip()
+
+            if titulo not in alvo:
+                inesperadas.append((hwnd, titulo, raiz))
+
+        if inesperadas:
+            print(f"\n[ALERTA] {len(inesperadas)} janela(s) inesperada(s):")
+
+            for hwnd, titulo, raiz in inesperadas:
+                print(f"  [!] {titulo} | HWND={hwnd}")
+                print(f"      Árvore: {nos[raiz]['titulo']}")
+
+            print("\n[RESULTADO] True")
+            print("[MOTIVO] Existem janelas fora dos títulos informados.")
+
+            return True
+
+        print("\n[RESULTADO] False")
+        print("[MOTIVO] Todas as janelas das árvores correspondentes foram autorizadas.")
+
+        return False
+
+    except Exception as erro:
+        print(f"\n[ERRO] Falha ao verificar árvore: {erro}")
+        raise
+
+    finally:
+        print("=" * 70 + "\n")
+
+@cronometrar()
+def ligar_janela_ficha():
+    """Abre o sistema (FolhaInicio) e chega ao Gerador pelos atalhos de menu."""
+
+    # verificação rápida se está ligada a outra janela
+    if deve_ser_resetado(
+        TITULO_INICIAL,
+        TITULO_TESTE,
+        TITULO_PRINCIPAL
+    ):
+        folha_iniciada = False
+        while not folha_iniciada:
+            try:
+                processo = folhaInicio()
+
+                if processo is None:
+                    raise RuntimeError("Não foi possível iniciar o FolhaInicio.")
+
+                print(f"Aguardando o FolhaInicio terminar (até {TEMPO_FOLHA_INICIO} s)...")
+
+                try:
+                    codigo = processo.wait(timeout=TEMPO_FOLHA_INICIO)
+                except subprocess.TimeoutExpired:
+                    processo.terminate()
+                    raise TimeoutError(
+                        f"O FolhaInicio não terminou em {TEMPO_FOLHA_INICIO} segundos."
+                    )
+
+                if codigo != 0:
+                    raise RuntimeError(
+                        f"O FolhaInicio terminou com erro (código {codigo})."
+                    )
+                folha_iniciada = True
+            except:
+                pass
+
+            print("FolhaInicio concluído.")
+
+    janela = exigir_janela(TITULO_INICIAL)
+    janela.set_focus()
+
+    for tecla in ATALHO_FICHA:
+        keyboard.send_keys(tecla, vk_packet=False)
+        time.sleep(INTERVALO_TECLAS)
+
+    return exigir_janela(TITULO_GERADOR)    
+
+
 # ======================================================================
 # EXECUÇÃO
 # ======================================================================
@@ -1180,6 +1517,8 @@ def main():
         print(f"[AVISO] --pasta ({args.pasta}) não é usado pelo AutoFicha; ignorado.")
 
     inicio_execucao = time.perf_counter()
+
+    ligar_janela_ficha()
 
     ok = False
     try:
