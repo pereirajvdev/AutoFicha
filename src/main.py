@@ -1054,7 +1054,9 @@ def montar_plano(args, parser):
 
     return [args.mat], _parse_intervalo(args.entrada, parser)
 
-
+# =========================================================================
+# SISTEMA DE ABERTURA DA JANELA DE FICHA FINANCEIRA - GERADOR DE RELATORIOS
+# =========================================================================
 def folhaInicio():
 
     print()
@@ -1373,7 +1375,7 @@ def ligar_janela_ficha():
         keyboard.send_keys(tecla, vk_packet=False)
         time.sleep(INTERVALO_TECLAS)
 
-    return exigir_janela(TITULO_GERADOR)    
+    return exigir_janela(TITULO_GERADOR)
 
 
 # ======================================================================
