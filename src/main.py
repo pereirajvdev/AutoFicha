@@ -48,6 +48,7 @@ TITULO_CONFIRMAR_SOBRESCRITA = "Confirmar Salvar como"
 TITULO_FICHA = "Ficha_Financeira_Resumo_Geral"
 TITULO_IMPRIMIR = "Imprimir"
 TITULO_PREPARANDO_IMPRESSAO = "Preparando - Ficha_Financeira_Resumo_Geral"
+TITULO_PREPARANDO_ERRO = "Preparando relatório - Ficha_Financeira_Resumo_Geral"
 TITULO_TESTE = "Teste"
 
 DIRETORIO_SERVIDORES = Path(
@@ -362,6 +363,242 @@ def aguardar_fechamento(hwnd, time_limit=10):
     return not _janela_visivel(hwnd)
 
 
+def _construir_arvore_janelas():
+    """
+    Enumera as janelas uma única vez (Desktop win32), aplica os filtros originais
+    e monta a hierarquia (filhas via GA_PARENT, proprietárias via GW_OWNER).
+
+    Retorna (nos, raizes, raiz_de):
+      nos     : {hwnd: {"titulo": str, "filhos": [hwnd, ...]}}  (ordem de enumeração)
+      raizes  : [hwnd, ...] janelas sem relação com outra janela exibida
+      raiz_de : {hwnd: hwnd_da_raiz} árvore à qual cada janela pertence
+    """
+
+    ignorar = {
+        "lidDialog",
+        "DataSetValidDialog",
+        "Chart editor",
+        "Editor de Cross-tab",
+        "Dictionary editor",
+        "Rich Edit",
+        "Task Host Window",
+        "CDA Server",
+        "RadeonSoftware",
+        "WUIconWindow",
+        "OneDrive",
+        "ad_msg_wnd",
+        "Window",
+        "Program Manager",
+        "Default IME",
+        "M",
+    }
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetWindow.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.GetDesktopWindow.argtypes = []
+    user32.GetDesktopWindow.restype = wintypes.HWND
+
+    GW_OWNER = 4
+    GA_PARENT = 1
+    desktop_hwnd = user32.GetDesktopWindow()
+
+    # 1) Descoberta + filtros originais
+    nos = {}
+    ordem = []
+    try:
+        janelas = Desktop(backend="win32").windows()
+    except Exception:
+        janelas = []
+
+    for janela in janelas:
+        try:
+            titulo = janela.window_text().strip()
+
+            if not titulo:
+                continue
+
+            if titulo in ignorar:
+                continue
+
+            if "GDI+ Window" in titulo:
+                continue
+
+            if "cmd.exe" in titulo.lower():
+                continue
+
+            if "C:\\Windows" in titulo:
+                continue
+
+            if "AMD" in titulo:
+                continue
+
+            if "Microsoft" in titulo:
+                continue
+
+            if "Realtek" in titulo:
+                continue
+
+            if "Bluetooth" in titulo:
+                continue
+
+            if "HiddenFax" in titulo:
+                continue
+
+            if ".NET-BroadcastEventWindow" in titulo:
+                continue
+
+            hwnd = janela.handle
+            if hwnd in nos:
+                continue
+
+            nos[hwnd] = {"titulo": titulo, "filhos": []}
+            ordem.append(hwnd)
+
+        except Exception:
+            # janela deixou de existir durante a consulta
+            pass
+
+    # 2) Relação direta: filha real (GA_PARENT) > proprietária (GW_OWNER)
+    def pai_direto(hwnd):
+        pai = user32.GetAncestor(hwnd, GA_PARENT)
+        if pai and pai != desktop_hwnd:
+            return pai
+        return user32.GetWindow(hwnd, GW_OWNER) or None
+
+    # 3) Sobe a cadeia até um ancestral presente entre as janelas descobertas
+    def resolver_pai(hwnd):
+        visitados = {hwnd}
+        candidato = pai_direto(hwnd)
+        while candidato and candidato not in visitados:
+            if candidato in nos:
+                return candidato
+            visitados.add(candidato)
+            candidato = pai_direto(candidato)
+        return None
+
+    pais = {}
+    raizes = []
+    for hwnd in ordem:
+        try:
+            pai = resolver_pai(hwnd)
+        except Exception:
+            pai = None
+        pais[hwnd] = pai
+        if pai is None:
+            raizes.append(hwnd)
+        else:
+            nos[pai]["filhos"].append(hwnd)
+
+    # 4) Raiz de cada janela (com memoização e proteção contra ciclos)
+    raiz_de = {}
+    for hwnd in ordem:
+        if hwnd in raiz_de:
+            continue
+        caminho = []
+        atual = hwnd
+        while atual is not None and atual not in raiz_de and atual not in caminho:
+            caminho.append(atual)
+            atual = pais[atual]
+        raiz = raiz_de[atual] if atual in raiz_de else caminho[-1]
+        for h in caminho:
+            raiz_de[h] = raiz
+
+    return nos, raizes, raiz_de
+
+
+def deve_ser_resetado(*titulos):
+    """
+    True  -> alguma árvore encontrada possui janela não informada.
+    False -> nenhuma árvore encontrada possui janela não informada.
+    """
+
+    alvo = {str(t).strip() for t in titulos}
+
+    print("\n" + "=" * 70)
+    print("[ARVORE] Verificando existência de janelas inesperadas")
+    print("=" * 70)
+
+    print(f"[ALVO] {alvo}")
+
+    if not alvo:
+        print("[AVISO] Nenhum título informado.")
+        return False
+
+    try:
+        nos, raizes, raiz_de = _construir_arvore_janelas()
+
+        print(f"[INFO] Janelas identificadas: {len(nos)}")
+        print(f"[INFO] Árvores identificadas: {len(raizes)}")
+
+        encontrados = {
+            h: no
+            for h, no in nos.items()
+            if no["titulo"].strip() in alvo
+        }
+
+        # Regra obrigatória: nenhum título encontrado -> False imediato.
+        # Outras janelas independentes nunca são motivo para retornar True.
+        if not encontrados:
+            print("\n[RESULTADO] False")
+            print("[MOTIVO] Nenhum dos títulos informados foi encontrado.")
+            return True
+
+        # A partir daqui pelo menos um título foi confirmado.
+        arvores = {raiz_de[h] for h in encontrados}
+
+        print(f"\n[ENCONTRADOS] {len(encontrados)}")
+
+        for hwnd, no in encontrados.items():
+            raiz = raiz_de[hwnd]
+            print(
+                f"  [OK] {no['titulo']} "
+                f"| HWND={hwnd} "
+                f"| Raiz={nos[raiz]['titulo']}"
+            )
+
+        print(f"\n[INFO] Árvores relevantes: {len(arvores)}")
+
+        inesperadas = []
+
+        for hwnd, no in nos.items():
+            raiz = raiz_de[hwnd]
+
+            if raiz not in arvores:
+                continue
+
+            titulo = no["titulo"].strip()
+
+            if titulo not in alvo:
+                inesperadas.append((hwnd, titulo, raiz))
+
+        if inesperadas:
+            print(f"\n[ALERTA] {len(inesperadas)} janela(s) inesperada(s):")
+
+            for hwnd, titulo, raiz in inesperadas:
+                print(f"  [!] {titulo} | HWND={hwnd}")
+                print(f"      Árvore: {nos[raiz]['titulo']}")
+
+            print("\n[RESULTADO] True")
+            print("[MOTIVO] Existem janelas fora dos títulos informados.")
+
+            return True
+
+        print("\n[RESULTADO] False")
+        print("[MOTIVO] Todas as janelas das árvores correspondentes foram autorizadas.")
+
+        return False
+
+    except Exception as erro:
+        print(f"\n[ERRO] Falha ao verificar árvore: {erro}")
+        raise
+
+    finally:
+        print("=" * 70 + "\n")
+
+
 # ======================================================================
 # CONTROLES E AÇÕES
 # ======================================================================
@@ -381,13 +618,22 @@ def clicar_controle(janela, texto):
 
 def tratar_erro(janela_erro):
     """Clica em 'Não' na janela 'Erro Não Previsto' já localizada."""
-    print("Janela 'Erro Não Previsto' detectada.")
 
-    if not clicar_controle(janela_erro, "&Não"):
-        print("Botão 'Não' não encontrado.")
-        return False
+    # seta foco, dá tab e dá enter
+    janela_erro.set_focus()
 
-    print("Clicado em 'Não'.")
+    keyboard.send_keys("{TAB}")
+    keyboard.send_keys("{ENTER}")
+
+    print("Fechada a janela de erro")
+
+    # identifica a Preparando relatório - Ficha_Financeira_Resumo_Geral e fecha
+    janela = aguardar_janela(TITULO_PREPARANDO_ERRO)
+    janela.close()
+
+    janela = exigir_janela(TITULO_GERADOR)
+    janela.set_focus()
+
     return True
 
 
@@ -537,7 +783,7 @@ def processar_resultado(nome_funcionario, ano):
         # Fecha o preview em qualquer caso, sem esperar por ele.
         fechar_preview(aguardar=False)
 
-    return "preview" if salvo else "falhou"
+    return "ok" if salvo else "falhou"
 
 
 @cronometrar()
@@ -547,37 +793,20 @@ def executar_ficha(nome_funcionario, ano, controles):
     ENTER (provável aviso bloqueando a tela) e tenta de novo, no máximo
     MAX_TENTATIVAS_FICHA vezes.
     """
-    resultado = "falhou"
-
-    for tentativa in range(1, MAX_TENTATIVAS_FICHA + 1):
+    resultado = ""
+    while resultado != "ok":
         if not clicar_ok(controles):
             return "falhou"
-
+        
         resultado = processar_resultado(nome_funcionario, ano)
 
-        if resultado == "preview":
-            print("[OK] Processamento concluído.")
-            return resultado
-
-        if resultado == "erro":
-            print("[ERRO] Fluxo de erro concluído.")
-            return resultado
-
         if resultado == "sem_janela":
-            print(
-                f"[ERRO] Nenhuma janela apareceu (tentativa {tentativa}/"
-                f"{MAX_TENTATIVAS_FICHA}). Enviando ENTER."
-            )
+            print(f"[ERRO] Nenhuma janela apareceu")
             janela = aguardar_janela(TITULO_PREPARANDO_IMPRESSAO)
             janela.set_focus()
             janela.close()
 
-        else:
-            print(
-                f"Resultado {resultado!r} (tentativa {tentativa}/"
-                f"{MAX_TENTATIVAS_FICHA})."
-            )
-
+    print("[OK] Processamento concluído.")
     return resultado
 
 
@@ -1092,243 +1321,6 @@ def folhaInicio():
 
     return processo
 
-def _construir_arvore_janelas():
-    """
-    Enumera as janelas uma única vez (Desktop win32), aplica os filtros originais
-    e monta a hierarquia (filhas via GA_PARENT, proprietárias via GW_OWNER).
-
-    Retorna (nos, raizes, raiz_de):
-      nos     : {hwnd: {"titulo": str, "filhos": [hwnd, ...]}}  (ordem de enumeração)
-      raizes  : [hwnd, ...] janelas sem relação com outra janela exibida
-      raiz_de : {hwnd: hwnd_da_raiz} árvore à qual cada janela pertence
-    """
-    import ctypes
-    from ctypes import wintypes
-    from pywinauto import Desktop
-
-    ignorar = {
-        "lidDialog",
-        "DataSetValidDialog",
-        "Chart editor",
-        "Editor de Cross-tab",
-        "Dictionary editor",
-        "Rich Edit",
-        "Task Host Window",
-        "CDA Server",
-        "RadeonSoftware",
-        "WUIconWindow",
-        "OneDrive",
-        "ad_msg_wnd",
-        "Window",
-        "Program Manager",
-        "Default IME",
-        "M",
-    }
-
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
-    user32.GetWindow.restype = wintypes.HWND
-    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
-    user32.GetAncestor.restype = wintypes.HWND
-    user32.GetDesktopWindow.argtypes = []
-    user32.GetDesktopWindow.restype = wintypes.HWND
-
-    GW_OWNER = 4
-    GA_PARENT = 1
-    desktop_hwnd = user32.GetDesktopWindow()
-
-    # 1) Descoberta + filtros originais
-    nos = {}
-    ordem = []
-    try:
-        janelas = Desktop(backend="win32").windows()
-    except Exception:
-        janelas = []
-
-    for janela in janelas:
-        try:
-            titulo = janela.window_text().strip()
-
-            if not titulo:
-                continue
-
-            if titulo in ignorar:
-                continue
-
-            if "GDI+ Window" in titulo:
-                continue
-
-            if "cmd.exe" in titulo.lower():
-                continue
-
-            if "C:\\Windows" in titulo:
-                continue
-
-            if "AMD" in titulo:
-                continue
-
-            if "Microsoft" in titulo:
-                continue
-
-            if "Realtek" in titulo:
-                continue
-
-            if "Bluetooth" in titulo:
-                continue
-
-            if "HiddenFax" in titulo:
-                continue
-
-            if ".NET-BroadcastEventWindow" in titulo:
-                continue
-
-            hwnd = janela.handle
-            if hwnd in nos:
-                continue
-
-            nos[hwnd] = {"titulo": titulo, "filhos": []}
-            ordem.append(hwnd)
-
-        except Exception:
-            # janela deixou de existir durante a consulta
-            pass
-
-    # 2) Relação direta: filha real (GA_PARENT) > proprietária (GW_OWNER)
-    def pai_direto(hwnd):
-        pai = user32.GetAncestor(hwnd, GA_PARENT)
-        if pai and pai != desktop_hwnd:
-            return pai
-        return user32.GetWindow(hwnd, GW_OWNER) or None
-
-    # 3) Sobe a cadeia até um ancestral presente entre as janelas descobertas
-    def resolver_pai(hwnd):
-        visitados = {hwnd}
-        candidato = pai_direto(hwnd)
-        while candidato and candidato not in visitados:
-            if candidato in nos:
-                return candidato
-            visitados.add(candidato)
-            candidato = pai_direto(candidato)
-        return None
-
-    pais = {}
-    raizes = []
-    for hwnd in ordem:
-        try:
-            pai = resolver_pai(hwnd)
-        except Exception:
-            pai = None
-        pais[hwnd] = pai
-        if pai is None:
-            raizes.append(hwnd)
-        else:
-            nos[pai]["filhos"].append(hwnd)
-
-    # 4) Raiz de cada janela (com memoização e proteção contra ciclos)
-    raiz_de = {}
-    for hwnd in ordem:
-        if hwnd in raiz_de:
-            continue
-        caminho = []
-        atual = hwnd
-        while atual is not None and atual not in raiz_de and atual not in caminho:
-            caminho.append(atual)
-            atual = pais[atual]
-        raiz = raiz_de[atual] if atual in raiz_de else caminho[-1]
-        for h in caminho:
-            raiz_de[h] = raiz
-
-    return nos, raizes, raiz_de
-
-
-def deve_ser_resetado(*titulos):
-    """
-    True  -> alguma árvore encontrada possui janela não informada.
-    False -> nenhuma árvore encontrada possui janela não informada.
-    """
-
-    alvo = {str(t).strip() for t in titulos}
-
-    print("\n" + "=" * 70)
-    print("[ARVORE] Verificando existência de janelas inesperadas")
-    print("=" * 70)
-
-    print(f"[ALVO] {alvo}")
-
-    if not alvo:
-        print("[AVISO] Nenhum título informado.")
-        return False
-
-    try:
-        nos, raizes, raiz_de = _construir_arvore_janelas()
-
-        print(f"[INFO] Janelas identificadas: {len(nos)}")
-        print(f"[INFO] Árvores identificadas: {len(raizes)}")
-
-        encontrados = {
-            h: no
-            for h, no in nos.items()
-            if no["titulo"].strip() in alvo
-        }
-
-        # Regra obrigatória: nenhum título encontrado -> False imediato.
-        # Outras janelas independentes nunca são motivo para retornar True.
-        if not encontrados:
-            print("\n[RESULTADO] False")
-            print("[MOTIVO] Nenhum dos títulos informados foi encontrado.")
-            return True
-
-        # A partir daqui pelo menos um título foi confirmado.
-        arvores = {raiz_de[h] for h in encontrados}
-
-        print(f"\n[ENCONTRADOS] {len(encontrados)}")
-
-        for hwnd, no in encontrados.items():
-            raiz = raiz_de[hwnd]
-            print(
-                f"  [OK] {no['titulo']} "
-                f"| HWND={hwnd} "
-                f"| Raiz={nos[raiz]['titulo']}"
-            )
-
-        print(f"\n[INFO] Árvores relevantes: {len(arvores)}")
-
-        inesperadas = []
-
-        for hwnd, no in nos.items():
-            raiz = raiz_de[hwnd]
-
-            if raiz not in arvores:
-                continue
-
-            titulo = no["titulo"].strip()
-
-            if titulo not in alvo:
-                inesperadas.append((hwnd, titulo, raiz))
-
-        if inesperadas:
-            print(f"\n[ALERTA] {len(inesperadas)} janela(s) inesperada(s):")
-
-            for hwnd, titulo, raiz in inesperadas:
-                print(f"  [!] {titulo} | HWND={hwnd}")
-                print(f"      Árvore: {nos[raiz]['titulo']}")
-
-            print("\n[RESULTADO] True")
-            print("[MOTIVO] Existem janelas fora dos títulos informados.")
-
-            return True
-
-        print("\n[RESULTADO] False")
-        print("[MOTIVO] Todas as janelas das árvores correspondentes foram autorizadas.")
-
-        return False
-
-    except Exception as erro:
-        print(f"\n[ERRO] Falha ao verificar árvore: {erro}")
-        raise
-
-    finally:
-        print("=" * 70 + "\n")
 
 @cronometrar()
 def ligar_janela_ficha():
@@ -1503,7 +1495,7 @@ def main():
         "--pasta",
         help="Enviado pelo painel; ainda não utilizado pelo AutoFicha",
     )
-
+    
     args = parser.parse_args()
 
     PERF_ATIVO = args.perf
